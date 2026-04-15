@@ -65,6 +65,19 @@ describe("App integration", () => {
           });
         case "runtime_voice_stop":
           return Promise.resolve(null);
+        case "runtime_voice_input_chunk":
+          return Promise.resolve({
+            event_type: "voice_input_chunk_accepted",
+            session_id: "session-1",
+            chunk_size_bytes: 512
+          });
+        case "runtime_voice_output_chunk":
+          return Promise.resolve({
+            event_type: "voice_output_chunk_ready",
+            session_id: "session-1",
+            chunk_size_bytes: 1024,
+            mime_type: "audio/pcm"
+          });
         default:
           return Promise.reject(new Error(`unexpected command: ${command}`));
       }
@@ -289,6 +302,37 @@ describe("App integration", () => {
       expect(invokeMock).toHaveBeenCalledWith("runtime_voice_stop", undefined);
     });
     expect(screen.getByText(/Status voz: inativa/i)).toBeInTheDocument();
+  });
+
+  it("sends voice input and output chunks while voice session is active", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: /iniciar sessao/i }));
+    await user.click(screen.getByRole("button", { name: /iniciar voz/i }));
+
+    await user.click(screen.getByRole("button", { name: /enviar chunk input/i }));
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("runtime_voice_input_chunk", {
+        chunkSizeBytes: 512
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByText(/Ultimo evento voz: input:512 bytes/i)).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /publicar chunk output/i }));
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("runtime_voice_output_chunk", {
+        mimeType: "audio/pcm",
+        chunkSizeBytes: 1024
+      });
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Ultimo evento voz: output:1024 bytes \(audio\/pcm\)/i)
+      ).toBeInTheDocument();
+    });
   });
 });
 

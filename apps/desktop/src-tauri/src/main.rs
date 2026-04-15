@@ -5,7 +5,9 @@ mod runtime_session;
 use runtime_app::{
     adaptive_heartbeat_interval, forward_heartbeat_to_sidecar, take_pending_sidecar_events,
     build_runtime_state, runtime_capabilities as runtime_capabilities_from_state,
+    publish_voice_output_chunk as runtime_publish_voice_output_chunk_in_state,
     runtime_health as runtime_health_from_state, start_session as runtime_start_session_in_state,
+    submit_voice_input_chunk as runtime_submit_voice_input_chunk_in_state,
     start_voice_session as runtime_start_voice_session_in_state,
     stop_session as runtime_stop_session_in_state,
     stop_voice_session as runtime_stop_voice_session_in_state,
@@ -98,6 +100,44 @@ fn runtime_voice_stop(
     Ok(())
 }
 
+#[tauri::command]
+fn runtime_voice_input_chunk(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Mutex<RuntimeState>>,
+    chunk_size_bytes: Option<usize>,
+) -> Result<VoiceSessionEvent, String> {
+    let mut locked_state = state
+        .lock()
+        .map_err(|_| "state lock failed".to_string())?;
+    let voice_event = runtime_voice_input_chunk_command(
+        &mut locked_state,
+        chunk_size_bytes.unwrap_or(512),
+    )?;
+    emit_voice_events(&app, Some(voice_event.clone()));
+    emit_sidecar_events(&app, &mut locked_state);
+    Ok(voice_event)
+}
+
+#[tauri::command]
+fn runtime_voice_output_chunk(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Mutex<RuntimeState>>,
+    mime_type: Option<String>,
+    chunk_size_bytes: Option<usize>,
+) -> Result<VoiceSessionEvent, String> {
+    let mut locked_state = state
+        .lock()
+        .map_err(|_| "state lock failed".to_string())?;
+    let voice_event = runtime_voice_output_chunk_command(
+        &mut locked_state,
+        mime_type,
+        chunk_size_bytes.unwrap_or(1024),
+    )?;
+    emit_voice_events(&app, Some(voice_event.clone()));
+    emit_sidecar_events(&app, &mut locked_state);
+    Ok(voice_event)
+}
+
 #[cfg(test)]
 #[tauri::command]
 fn runtime_voice_start_test(
@@ -120,6 +160,35 @@ fn runtime_voice_stop_test(
         .map_err(|_| "state lock failed".to_string())?;
     let _ = runtime_stop_voice_session_command(&mut locked_state, "stopped_by_test");
     Ok(())
+}
+
+#[cfg(test)]
+#[tauri::command]
+fn runtime_voice_input_chunk_test(
+    state: tauri::State<'_, Mutex<RuntimeState>>,
+    chunk_size_bytes: Option<usize>,
+) -> Result<VoiceSessionEvent, String> {
+    let mut locked_state = state
+        .lock()
+        .map_err(|_| "state lock failed".to_string())?;
+    runtime_voice_input_chunk_command(&mut locked_state, chunk_size_bytes.unwrap_or(512))
+}
+
+#[cfg(test)]
+#[tauri::command]
+fn runtime_voice_output_chunk_test(
+    state: tauri::State<'_, Mutex<RuntimeState>>,
+    mime_type: Option<String>,
+    chunk_size_bytes: Option<usize>,
+) -> Result<VoiceSessionEvent, String> {
+    let mut locked_state = state
+        .lock()
+        .map_err(|_| "state lock failed".to_string())?;
+    runtime_voice_output_chunk_command(
+        &mut locked_state,
+        mime_type,
+        chunk_size_bytes.unwrap_or(1024),
+    )
 }
 
 #[tauri::command]
@@ -203,7 +272,9 @@ fn main() {
             runtime_start_session,
             runtime_stop_session,
             runtime_voice_start,
-            runtime_voice_stop
+            runtime_voice_stop,
+            runtime_voice_input_chunk,
+            runtime_voice_output_chunk
         ])
         .run(tauri::generate_context!())
         .expect("tauri application failed");
@@ -233,6 +304,21 @@ fn runtime_stop_voice_session_command(
     reason: &str,
 ) -> Option<VoiceSessionEvent> {
     runtime_stop_voice_session_in_state(runtime_state, reason)
+}
+
+fn runtime_voice_input_chunk_command(
+    runtime_state: &mut RuntimeState,
+    chunk_size_bytes: usize,
+) -> Result<VoiceSessionEvent, String> {
+    runtime_submit_voice_input_chunk_in_state(runtime_state, chunk_size_bytes)
+}
+
+fn runtime_voice_output_chunk_command(
+    runtime_state: &mut RuntimeState,
+    mime_type: Option<String>,
+    chunk_size_bytes: usize,
+) -> Result<VoiceSessionEvent, String> {
+    runtime_publish_voice_output_chunk_in_state(runtime_state, mime_type, chunk_size_bytes)
 }
 
 fn runtime_capabilities_command(
@@ -305,6 +391,9 @@ mod command_tests {
             _ => panic!("expected voice stopped event"),
         }
 
+        let voice_input = runtime_voice_input_chunk_command(&mut runtime_state, 512);
+        assert!(voice_input.is_err());
+
         let stopped_event =
             runtime_stop_session_command(&mut runtime_state).expect("session should stop");
         match stopped_event {
@@ -364,7 +453,9 @@ mod ipc_tests {
                 runtime_start_session_test,
                 runtime_stop_session_test,
                 runtime_voice_start_test,
-                runtime_voice_stop_test
+                runtime_voice_stop_test,
+                runtime_voice_input_chunk_test,
+                runtime_voice_output_chunk_test
             ])
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .expect("mock app should build");
@@ -427,6 +518,55 @@ mod ipc_tests {
             invoke_request("runtime_voice_stop_test", InvokeBody::default()),
         )
         .expect("runtime_voice_stop_test should succeed");
+
+        let voice_start_body_again = serde_json::json!({
+            "locale": "pt-BR"
+        });
+        let _ = tauri::test::get_ipc_response(
+            &webview,
+            invoke_request("runtime_voice_start_test", InvokeBody::Json(voice_start_body_again)),
+        )
+        .expect("runtime_voice_start_test should succeed again");
+
+        let voice_input_body = serde_json::json!({
+            "chunkSizeBytes": 256
+        });
+        let input_event = tauri::test::get_ipc_response(
+            &webview,
+            invoke_request("runtime_voice_input_chunk_test", InvokeBody::Json(voice_input_body)),
+        )
+        .expect("runtime_voice_input_chunk_test should succeed")
+        .deserialize::<VoiceSessionEvent>()
+        .expect("voice input event should deserialize");
+        match input_event {
+            VoiceSessionEvent::VoiceInputChunkAccepted { chunk_size_bytes, .. } => {
+                assert_eq!(chunk_size_bytes, 256);
+            }
+            _ => panic!("expected voice input chunk accepted event"),
+        }
+
+        let voice_output_body = serde_json::json!({
+            "mimeType": "audio/pcm",
+            "chunkSizeBytes": 512
+        });
+        let output_event = tauri::test::get_ipc_response(
+            &webview,
+            invoke_request("runtime_voice_output_chunk_test", InvokeBody::Json(voice_output_body)),
+        )
+        .expect("runtime_voice_output_chunk_test should succeed")
+        .deserialize::<VoiceSessionEvent>()
+        .expect("voice output event should deserialize");
+        match output_event {
+            VoiceSessionEvent::VoiceOutputChunkReady {
+                chunk_size_bytes,
+                mime_type,
+                ..
+            } => {
+                assert_eq!(chunk_size_bytes, 512);
+                assert_eq!(mime_type, "audio/pcm");
+            }
+            _ => panic!("expected voice output chunk ready event"),
+        }
     }
 
     fn invoke_request(command: &str, body: InvokeBody) -> InvokeRequest {

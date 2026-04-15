@@ -34,6 +34,8 @@ type VoiceSessionEvent = {
   session_id: string;
   locale?: string;
   reason?: string;
+  chunk_size_bytes?: number;
+  mime_type?: string;
 };
 
 type RuntimeMode = "local" | "cloud" | "hybrid";
@@ -93,8 +95,11 @@ export function App() {
   const [isStarting, setIsStarting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState("inativa");
+  const [lastVoiceEvent, setLastVoiceEvent] = useState("n/a");
   const [isVoiceStarting, setIsVoiceStarting] = useState(false);
   const [isVoiceStopping, setIsVoiceStopping] = useState(false);
+  const [isVoiceInputSending, setIsVoiceInputSending] = useState(false);
+  const [isVoiceOutputPublishing, setIsVoiceOutputPublishing] = useState(false);
   const runtimeLogRef = useRef<HTMLUListElement | null>(null);
   const sidecarLogRef = useRef<HTMLUListElement | null>(null);
 
@@ -160,6 +165,37 @@ export function App() {
         setErrorMessage(`Falha ao parar voz: ${String(error)}`);
       })
       .finally(() => setIsVoiceStopping(false));
+  };
+
+  const sendVoiceInputChunk = () => {
+    setIsVoiceInputSending(true);
+    setErrorMessage(null);
+    void invoke<VoiceSessionEvent>("runtime_voice_input_chunk", { chunkSizeBytes: 512 })
+      .then((event) => {
+        setLastVoiceEvent(`input:${event.chunk_size_bytes ?? "n/a"} bytes`);
+      })
+      .catch((error: unknown) => {
+        setErrorMessage(`Falha ao enviar chunk de voz: ${String(error)}`);
+      })
+      .finally(() => setIsVoiceInputSending(false));
+  };
+
+  const publishVoiceOutputChunk = () => {
+    setIsVoiceOutputPublishing(true);
+    setErrorMessage(null);
+    void invoke<VoiceSessionEvent>("runtime_voice_output_chunk", {
+      mimeType: "audio/pcm",
+      chunkSizeBytes: 1024
+    })
+      .then((event) => {
+        setLastVoiceEvent(
+          `output:${event.chunk_size_bytes ?? "n/a"} bytes (${event.mime_type ?? "n/a"})`
+        );
+      })
+      .catch((error: unknown) => {
+        setErrorMessage(`Falha ao publicar chunk de saida: ${String(error)}`);
+      })
+      .finally(() => setIsVoiceOutputPublishing(false));
   };
 
   const filteredRuntimeEvents = runtimeEvents.filter((event) => {
@@ -255,8 +291,16 @@ export function App() {
       (event) => {
         if (event.payload.event_type === "voice_session_started") {
           setVoiceStatus(`ativa (${event.payload.locale ?? "n/a"})`);
+          setLastVoiceEvent(`started:${event.payload.locale ?? "n/a"}`);
         } else if (event.payload.event_type === "voice_session_stopped") {
           setVoiceStatus("inativa");
+          setLastVoiceEvent(`stopped:${event.payload.reason ?? "n/a"}`);
+        } else if (event.payload.event_type === "voice_input_chunk_accepted") {
+          setLastVoiceEvent(`input:${event.payload.chunk_size_bytes ?? "n/a"} bytes`);
+        } else if (event.payload.event_type === "voice_output_chunk_ready") {
+          setLastVoiceEvent(
+            `output:${event.payload.chunk_size_bytes ?? "n/a"} bytes (${event.payload.mime_type ?? "n/a"})`
+          );
         }
       }
     );
@@ -282,6 +326,7 @@ export function App() {
             <p>Status runtime: {health}</p>
             <p>Status sidecar: {sidecarHealth}</p>
             <p>Status voz: {voiceStatus}</p>
+            <p>Ultimo evento voz: {lastVoiceEvent}</p>
             <p>
               Sessao ativa:{" "}
               {session
@@ -338,6 +383,18 @@ export function App() {
                 disabled={isVoiceStopping || voiceStatus === "inativa"}
               >
                 {isVoiceStopping ? "Parando voz..." : "Parar voz"}
+              </button>
+              <button
+                onClick={sendVoiceInputChunk}
+                disabled={isVoiceInputSending || voiceStatus === "inativa"}
+              >
+                {isVoiceInputSending ? "Enviando input..." : "Enviar chunk input"}
+              </button>
+              <button
+                onClick={publishVoiceOutputChunk}
+                disabled={isVoiceOutputPublishing || voiceStatus === "inativa"}
+              >
+                {isVoiceOutputPublishing ? "Publicando output..." : "Publicar chunk output"}
               </button>
               <button onClick={refreshSidecarHealth}>Health sidecar</button>
             </div>

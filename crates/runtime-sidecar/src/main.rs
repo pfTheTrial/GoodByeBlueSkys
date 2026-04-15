@@ -62,6 +62,8 @@ fn handle_protocol_line(raw_line: &str) -> SidecarResponse {
         SidecarRequest::SessionStopped { .. } => SidecarResponse::ack(),
         SidecarRequest::VoiceSessionStarted { .. } => SidecarResponse::ack(),
         SidecarRequest::VoiceSessionStopped { .. } => SidecarResponse::ack(),
+        SidecarRequest::VoiceInputChunk { .. } => SidecarResponse::ack(),
+        SidecarRequest::VoiceOutputChunk { .. } => SidecarResponse::ack(),
         SidecarRequest::Shutdown => SidecarResponse::bye(),
     }
 }
@@ -91,6 +93,15 @@ enum SidecarRequest {
     VoiceSessionStopped {
         session_id: String,
         reason: String,
+    },
+    VoiceInputChunk {
+        session_id: String,
+        chunk_size_bytes: usize,
+    },
+    VoiceOutputChunk {
+        session_id: String,
+        mime_type: String,
+        chunk_size_bytes: usize,
     },
     Shutdown,
 }
@@ -138,6 +149,14 @@ mod tests {
         let voice_started = r#"{"kind":"voice_session_started","session_id":"s1","locale":"pt-BR"}"#;
         let voice_started_response = handle_protocol_line(voice_started);
         assert!(matches!(voice_started_response.kind, SidecarResponseKind::Ack));
+
+        let voice_input = r#"{"kind":"voice_input_chunk","session_id":"s1","chunk_size_bytes":512}"#;
+        let voice_input_response = handle_protocol_line(voice_input);
+        assert!(matches!(voice_input_response.kind, SidecarResponseKind::Ack));
+
+        let voice_output = r#"{"kind":"voice_output_chunk","session_id":"s1","mime_type":"audio/pcm","chunk_size_bytes":1024}"#;
+        let voice_output_response = handle_protocol_line(voice_output);
+        assert!(matches!(voice_output_response.kind, SidecarResponseKind::Ack));
 
         let shutdown = r#"{"kind":"shutdown"}"#;
         let shutdown_response = handle_protocol_line(shutdown);

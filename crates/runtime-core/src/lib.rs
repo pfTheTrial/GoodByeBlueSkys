@@ -5,7 +5,7 @@ pub mod registry;
 pub use contracts::{
     AgentEvent, CapabilityManifest, PrivacyLevel, RuntimeMode, RuntimePolicy, SessionContext,
     RuntimeSessionContextPayload, SessionEvent, StartupMode, SupportedCapabilities, TransportKind,
-    VoiceSessionConfig, VoiceSessionEvent,
+    VoiceInputChunkPayload, VoiceOutputChunkPayload, VoiceSessionConfig, VoiceSessionEvent,
 };
 pub use policy::{DefaultManifestScoringPolicy, ManifestScoringPolicy};
 pub use registry::{CapabilityRegistry, RegistryError};

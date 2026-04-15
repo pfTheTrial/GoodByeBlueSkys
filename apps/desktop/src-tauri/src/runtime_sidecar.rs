@@ -1,4 +1,4 @@
-use runtime_core::SessionContext;
+use runtime_core::{SessionContext, VoiceInputChunkPayload, VoiceOutputChunkPayload};
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -144,6 +144,27 @@ impl RuntimeSidecarSession {
         })
     }
 
+    pub fn send_voice_input_chunk(
+        &mut self,
+        payload: &VoiceInputChunkPayload,
+    ) -> Result<SidecarTelemetryEvent, String> {
+        self.send_request(SidecarRequest::VoiceInputChunk {
+            session_id: payload.session_id.clone(),
+            chunk_size_bytes: payload.chunk_size_bytes,
+        })
+    }
+
+    pub fn send_voice_output_chunk(
+        &mut self,
+        payload: &VoiceOutputChunkPayload,
+    ) -> Result<SidecarTelemetryEvent, String> {
+        self.send_request(SidecarRequest::VoiceOutputChunk {
+            session_id: payload.session_id.clone(),
+            mime_type: payload.mime_type.clone(),
+            chunk_size_bytes: payload.chunk_size_bytes,
+        })
+    }
+
     fn send_request(&mut self, request: SidecarRequest) -> Result<SidecarTelemetryEvent, String> {
         let command_name = request.command_name().to_string();
         let request_session_id = request.session_id().map(ToString::to_string);
@@ -212,6 +233,15 @@ enum SidecarRequest {
         session_id: String,
         reason: String,
     },
+    VoiceInputChunk {
+        session_id: String,
+        chunk_size_bytes: usize,
+    },
+    VoiceOutputChunk {
+        session_id: String,
+        mime_type: String,
+        chunk_size_bytes: usize,
+    },
     Shutdown,
 }
 
@@ -223,6 +253,8 @@ impl SidecarRequest {
             SidecarRequest::SessionStopped { .. } => "session_stopped",
             SidecarRequest::VoiceSessionStarted { .. } => "voice_session_started",
             SidecarRequest::VoiceSessionStopped { .. } => "voice_session_stopped",
+            SidecarRequest::VoiceInputChunk { .. } => "voice_input_chunk",
+            SidecarRequest::VoiceOutputChunk { .. } => "voice_output_chunk",
             SidecarRequest::Shutdown => "shutdown",
         }
     }
@@ -234,6 +266,8 @@ impl SidecarRequest {
             SidecarRequest::SessionStopped { session_id, .. } => Some(session_id),
             SidecarRequest::VoiceSessionStarted { session_id, .. } => Some(session_id),
             SidecarRequest::VoiceSessionStopped { session_id, .. } => Some(session_id),
+            SidecarRequest::VoiceInputChunk { session_id, .. } => Some(session_id),
+            SidecarRequest::VoiceOutputChunk { session_id, .. } => Some(session_id),
             SidecarRequest::Shutdown => None,
         }
     }

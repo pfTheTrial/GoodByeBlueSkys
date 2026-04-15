@@ -120,6 +120,19 @@ pub struct VoiceSessionConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VoiceInputChunkPayload {
+    pub session_id: String,
+    pub chunk_size_bytes: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VoiceOutputChunkPayload {
+    pub session_id: String,
+    pub mime_type: String,
+    pub chunk_size_bytes: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "event_type", rename_all = "snake_case")]
 pub enum VoiceSessionEvent {
     VoiceSessionStarted {
@@ -172,5 +185,27 @@ mod tests {
         assert_eq!(value["event_type"], "voice_session_started");
         assert_eq!(value["session_id"], "session-voice-1");
         assert_eq!(value["locale"], "pt-BR");
+    }
+
+    #[test]
+    fn serializes_voice_chunk_payloads() {
+        let input = VoiceInputChunkPayload {
+            session_id: "session-voice-1".to_string(),
+            chunk_size_bytes: 512,
+        };
+        let output = VoiceOutputChunkPayload {
+            session_id: "session-voice-1".to_string(),
+            mime_type: "audio/pcm".to_string(),
+            chunk_size_bytes: 1024,
+        };
+
+        let input_value = serde_json::to_value(input).expect("input payload should serialize");
+        let output_value = serde_json::to_value(output).expect("output payload should serialize");
+
+        assert_eq!(input_value["session_id"], "session-voice-1");
+        assert_eq!(input_value["chunk_size_bytes"], 512);
+        assert_eq!(output_value["session_id"], "session-voice-1");
+        assert_eq!(output_value["mime_type"], "audio/pcm");
+        assert_eq!(output_value["chunk_size_bytes"], 1024);
     }
 }

@@ -40,6 +40,35 @@ describe("Companion desktop smoke", () => {
       }
     );
 
+    const sendVoiceInputButton = await $("button=Enviar chunk input");
+    await sendVoiceInputButton.click();
+
+    const lastVoiceEventLine = await $("p*=Ultimo evento voz:");
+    await browser.waitUntil(
+      async () => {
+        const text = await lastVoiceEventLine.getText();
+        return text.includes("input:512");
+      },
+      {
+        timeout: 15000,
+        timeoutMsg: "evento de input de voz nao foi registrado"
+      }
+    );
+
+    const publishVoiceOutputButton = await $("button=Publicar chunk output");
+    await publishVoiceOutputButton.click();
+
+    await browser.waitUntil(
+      async () => {
+        const text = await lastVoiceEventLine.getText();
+        return text.includes("output:1024");
+      },
+      {
+        timeout: 15000,
+        timeoutMsg: "evento de output de voz nao foi registrado"
+      }
+    );
+
     const stopVoiceButton = await $("button=Parar voz");
     await stopVoiceButton.click();
 

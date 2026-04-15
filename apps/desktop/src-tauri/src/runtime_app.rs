@@ -7,7 +7,7 @@ use std::time::Duration;
 use runtime_core::{
     CapabilityManifest, CapabilityRegistry, PrivacyLevel, RuntimeMode, StartupMode,
     RuntimePolicy, RuntimeSessionContextPayload, SessionEvent, SupportedCapabilities, TransportKind,
-    VoiceSessionConfig, VoiceSessionEvent,
+    VoiceInputChunkPayload, VoiceOutputChunkPayload, VoiceSessionConfig, VoiceSessionEvent,
 };
 
 use crate::runtime_session::{
@@ -193,6 +193,70 @@ pub fn stop_voice_session(
     Some(VoiceSessionEvent::VoiceSessionStopped {
         session_id: voice_session.session_id,
         reason: reason.to_string(),
+    })
+}
+
+pub fn submit_voice_input_chunk(
+    runtime_state: &mut RuntimeState,
+    chunk_size_bytes: usize,
+) -> Result<VoiceSessionEvent, String> {
+    let voice_session = runtime_state
+        .voice_session
+        .as_ref()
+        .ok_or_else(|| "voice session is not active".to_string())?;
+
+    if chunk_size_bytes == 0 {
+        return Err("voice input chunk must be greater than zero".to_string());
+    }
+
+    if let Some(sidecar_session) = runtime_state.sidecar_session.as_mut() {
+        let payload = VoiceInputChunkPayload {
+            session_id: voice_session.session_id.clone(),
+            chunk_size_bytes,
+        };
+        let telemetry_event = sidecar_session.send_voice_input_chunk(&payload)?;
+        runtime_state.pending_sidecar_events.push(telemetry_event);
+    }
+
+    Ok(VoiceSessionEvent::VoiceInputChunkAccepted {
+        session_id: voice_session.session_id.clone(),
+        chunk_size_bytes,
+    })
+}
+
+pub fn publish_voice_output_chunk(
+    runtime_state: &mut RuntimeState,
+    mime_type: Option<String>,
+    chunk_size_bytes: usize,
+) -> Result<VoiceSessionEvent, String> {
+    let voice_session = runtime_state
+        .voice_session
+        .as_ref()
+        .ok_or_else(|| "voice session is not active".to_string())?;
+
+    if chunk_size_bytes == 0 {
+        return Err("voice output chunk must be greater than zero".to_string());
+    }
+
+    let resolved_mime_type = mime_type
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "audio/pcm".to_string());
+
+    if let Some(sidecar_session) = runtime_state.sidecar_session.as_mut() {
+        let payload = VoiceOutputChunkPayload {
+            session_id: voice_session.session_id.clone(),
+            mime_type: resolved_mime_type.clone(),
+            chunk_size_bytes,
+        };
+        let telemetry_event = sidecar_session.send_voice_output_chunk(&payload)?;
+        runtime_state.pending_sidecar_events.push(telemetry_event);
+    }
+
+    Ok(VoiceSessionEvent::VoiceOutputChunkReady {
+        session_id: voice_session.session_id.clone(),
+        mime_type: resolved_mime_type,
+        chunk_size_bytes,
     })
 }
 
@@ -537,6 +601,31 @@ mod tests {
             VoiceSessionEvent::VoiceSessionStarted { .. } => {}
             _ => panic!("expected voice session started event"),
         }
+        let input_chunk = submit_voice_input_chunk(&mut runtime_state, 512)
+            .expect("voice input chunk should be accepted");
+        match input_chunk {
+            VoiceSessionEvent::VoiceInputChunkAccepted { chunk_size_bytes, .. } => {
+                assert_eq!(chunk_size_bytes, 512);
+            }
+            _ => panic!("expected voice input chunk accepted event"),
+        }
+        let output_chunk = publish_voice_output_chunk(
+            &mut runtime_state,
+            Some("audio/pcm".to_string()),
+            1024,
+        )
+        .expect("voice output chunk should be published");
+        match output_chunk {
+            VoiceSessionEvent::VoiceOutputChunkReady {
+                chunk_size_bytes,
+                mime_type,
+                ..
+            } => {
+                assert_eq!(chunk_size_bytes, 1024);
+                assert_eq!(mime_type, "audio/pcm");
+            }
+            _ => panic!("expected voice output chunk ready event"),
+        }
         let voice_stopped =
             stop_voice_session(&mut runtime_state, "voice_stopped_by_test")
                 .expect("voice session should stop with sidecar");
@@ -560,6 +649,8 @@ mod tests {
 
         assert!(commands.contains(&("session_started", "ack")));
         assert!(commands.contains(&("voice_session_started", "ack")));
+        assert!(commands.contains(&("voice_input_chunk", "ack")));
+        assert!(commands.contains(&("voice_output_chunk", "ack")));
         assert!(commands.contains(&("voice_session_stopped", "ack")));
         assert!(commands.contains(&("runtime_heartbeat", "ack")));
         assert!(commands.contains(&("session_stopped", "ack")));
