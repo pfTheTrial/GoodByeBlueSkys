@@ -112,6 +112,36 @@ pub struct RuntimeSessionContextPayload {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VoiceSessionConfig {
+    pub session_id: String,
+    pub input_device_id: Option<String>,
+    pub output_device_id: Option<String>,
+    pub locale: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "event_type", rename_all = "snake_case")]
+pub enum VoiceSessionEvent {
+    VoiceSessionStarted {
+        session_id: String,
+        locale: String,
+    },
+    VoiceInputChunkAccepted {
+        session_id: String,
+        chunk_size_bytes: usize,
+    },
+    VoiceOutputChunkReady {
+        session_id: String,
+        mime_type: String,
+        chunk_size_bytes: usize,
+    },
+    VoiceSessionStopped {
+        session_id: String,
+        reason: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "event_type", rename_all = "snake_case")]
 pub enum SessionEvent {
     SessionStarted { session_id: String, active_pack: String },
@@ -125,4 +155,22 @@ pub enum SessionEvent {
         active_pack: String,
         reason: String,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serializes_voice_session_events_with_stable_tag() {
+        let event = VoiceSessionEvent::VoiceSessionStarted {
+            session_id: "session-voice-1".to_string(),
+            locale: "pt-BR".to_string(),
+        };
+
+        let value = serde_json::to_value(event).expect("voice event should serialize");
+        assert_eq!(value["event_type"], "voice_session_started");
+        assert_eq!(value["session_id"], "session-voice-1");
+        assert_eq!(value["locale"], "pt-BR");
+    }
 }
