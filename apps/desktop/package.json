@@ -22,18 +22,18 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
     "@wdio/cli": "^9.19.2",
     "@wdio/globals": "^9.19.2",
     "@wdio/local-runner": "^9.19.2",
     "@wdio/mocha-framework": "^9.19.2",
     "@wdio/spec-reporter": "^9.19.2",
-    "@types/react": "^18.3.3",
-    "@types/react-dom": "^18.3.0",
-    "@vitejs/plugin-react": "^4.3.1",
     "jsdom": "^29.0.2",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.7.2",
-    "vite": "^5.4.10",
+    "vite": "^7.3.2",
     "vitest": "^4.1.4"
   }
 }
