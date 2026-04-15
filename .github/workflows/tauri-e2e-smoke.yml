@@ -51,6 +51,8 @@ jobs:
 
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
 
       - name: Install workspace dependencies
         run: npm ci
