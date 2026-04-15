@@ -1,0 +1,17 @@
+[package]
+name = "companion-desktop"
+version = "0.1.0"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+agent-supervisor = { path = "../../../crates/agent-supervisor" }
+policy-engine = { path = "../../../crates/policy-engine" }
+runtime-core = { path = "../../../crates/runtime-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = ["test"] }
+
+[dev-dependencies]

@@ -1,0 +1,14 @@
+{
+  "name": "companion-platform",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/desktop"
+  ],
+  "scripts": {
+    "desktop:dev": "npm run tauri:dev --workspace @companion/desktop",
+    "desktop:build": "npm run tauri:build --workspace @companion/desktop",
+    "desktop:test-ui": "npm run test:ui --workspace @companion/desktop",
+    "desktop:test-e2e": "npm run test:e2e:tauri --workspace @companion/desktop"
+  }
+}

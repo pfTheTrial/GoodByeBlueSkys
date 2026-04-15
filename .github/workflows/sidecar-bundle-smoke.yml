@@ -1,0 +1,27 @@
+name: sidecar-bundle-smoke
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  sidecar-smoke:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run sidecar bundle smoke test
+        shell: pwsh
+        run: |
+          powershell -ExecutionPolicy Bypass -File tools/scripts/smoke-sidecar-bundle.ps1

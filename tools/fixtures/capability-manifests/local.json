@@ -1,0 +1,16 @@
+[
+  {
+    "id": "local-cli-bootstrap",
+    "transport": "cli",
+    "privacy_level": "local-first",
+    "mode": "local",
+    "supports": ["chat", "streaming", "screen_reasoning", "tool_use", "local_execution"]
+  },
+  {
+    "id": "local-ollama-bootstrap",
+    "transport": "local",
+    "privacy_level": "local-only",
+    "mode": "local",
+    "supports": ["chat", "streaming", "vision"]
+  }
+]

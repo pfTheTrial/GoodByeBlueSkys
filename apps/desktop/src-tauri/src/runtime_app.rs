@@ -1,0 +1,520 @@
+use agent_supervisor::AgentSupervisor;
+use policy_engine::{BackendPolicyEngine, UploadDataType, WorkspacePolicy};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::time::Duration;
+
+use runtime_core::{
+    CapabilityManifest, CapabilityRegistry, PrivacyLevel, RuntimeMode, StartupMode,
+    RuntimePolicy, RuntimeSessionContextPayload, SessionEvent, SupportedCapabilities, TransportKind,
+};
+
+use crate::runtime_session::{
+    runtime_mode_label, HeartbeatConfig, SessionController,
+};
+use crate::runtime_sidecar::{sidecar_enabled_from_env, RuntimeSidecarSession, SidecarTelemetryEvent};
+
+pub struct RuntimeState {
+    pub registry: CapabilityRegistry,
+    pub session_controller: Arc<SessionController>,
+    pub agent_supervisor: AgentSupervisor,
+    pub heartbeat_config: HeartbeatConfig,
+    pub default_runtime_policy: RuntimePolicy,
+    pub workspace_policy: WorkspacePolicy,
+    pub sidecar_enabled: bool,
+    pub sidecar_session: Option<RuntimeSidecarSession>,
+    pub pending_sidecar_events: Vec<SidecarTelemetryEvent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeCapabilityManifestPayload {
+    pub id: String,
+    pub transport: String,
+    pub privacy_level: String,
+}
+
+pub fn runtime_health() -> String {
+    "ok:warm".to_string()
+}
+
+pub fn start_session(
+    runtime_state: &mut RuntimeState,
+    active_pack: Option<String>,
+    runtime_mode: Option<RuntimeMode>,
+) -> Result<(RuntimeSessionContextPayload, SessionEvent), String> {
+    let effective_runtime_mode = runtime_mode.unwrap_or(runtime_state.default_runtime_policy.mode);
+    let effective_runtime_policy = RuntimePolicy {
+        mode: effective_runtime_mode,
+        minimum_privacy_level: runtime_state.default_runtime_policy.minimum_privacy_level,
+    };
+
+    if !BackendPolicyEngine::upload_is_allowed(
+        UploadDataType::Screen,
+        runtime_state.workspace_policy,
+        effective_runtime_policy,
+    ) {
+        return Err("workspace policy blocks screen upload in current mode".to_string());
+    }
+
+    let pack_name = active_pack.unwrap_or_else(|| "companion".to_string());
+    let agent_id = agent_id_for_pack(&pack_name);
+
+    if runtime_state.sidecar_enabled {
+        if runtime_state.sidecar_session.is_none() {
+            runtime_state.sidecar_session = Some(RuntimeSidecarSession::spawn()?);
+        }
+    }
+
+    runtime_state
+        .agent_supervisor
+        .register_agent(agent_id.clone());
+    runtime_state
+        .agent_supervisor
+        .set_hot(&agent_id)
+        .map_err(|error| format!("agent supervisor error: {error:?}"))?;
+
+    let _selected_backend = runtime_state
+        .registry
+        .choose_backend_with_filter(true, |manifest| {
+            BackendPolicyEngine::manifest_is_allowed(manifest, effective_runtime_policy)
+        })
+        .map_err(|error| format!("backend selection failed: {error}"))?;
+
+    let (session_context, started_event) =
+        runtime_state
+            .session_controller
+            .start_session(pack_name, effective_runtime_mode, agent_id);
+
+    if let Some(sidecar_session) = runtime_state.sidecar_session.as_mut() {
+        let telemetry_event = sidecar_session.send_session_started(&session_context)?;
+        runtime_state.pending_sidecar_events.push(telemetry_event);
+    }
+
+    Ok((
+        RuntimeSessionContextPayload {
+            session_id: session_context.session_id,
+            active_pack: session_context.active_pack,
+            runtime_mode: runtime_mode_label(session_context.runtime_mode),
+        },
+        started_event,
+    ))
+}
+
+pub fn stop_session(runtime_state: &mut RuntimeState) -> Option<SessionEvent> {
+    let current_session = runtime_state
+        .session_controller
+        .current_session();
+
+    if let Some(agent_id) = current_session
+        .as_ref()
+        .map(|session| session.assigned_agent_id.clone())
+    {
+        let _ = runtime_state.agent_supervisor.set_cold(&agent_id);
+    }
+
+    if let (Some(session), Some(sidecar_session)) =
+        (current_session.as_ref(), runtime_state.sidecar_session.as_mut())
+    {
+        if let Ok(telemetry_event) =
+            sidecar_session.send_session_stopped(&session.session_id, "stopped_by_user")
+        {
+            runtime_state.pending_sidecar_events.push(telemetry_event);
+        }
+    }
+
+    if let Some(sidecar_session) = runtime_state.sidecar_session.take() {
+        if let Ok(telemetry_event) = sidecar_session.shutdown() {
+            runtime_state.pending_sidecar_events.push(telemetry_event);
+        }
+    }
+
+    runtime_state.session_controller.stop_session()
+}
+
+pub fn forward_heartbeat_to_sidecar(runtime_state: &mut RuntimeState) -> Result<(), String> {
+    if !runtime_state.sidecar_enabled {
+        return Ok(());
+    }
+
+    let session_id = match runtime_state
+        .session_controller
+        .current_session()
+        .map(|session| session.session_id)
+    {
+        Some(value) => value,
+        None => return Ok(()),
+    };
+
+    if let Some(sidecar_session) = runtime_state.sidecar_session.as_mut() {
+        let telemetry_event = sidecar_session.send_runtime_heartbeat(&session_id)?;
+        runtime_state.pending_sidecar_events.push(telemetry_event);
+    }
+
+    Ok(())
+}
+
+pub fn take_pending_sidecar_events(runtime_state: &mut RuntimeState) -> Vec<SidecarTelemetryEvent> {
+    std::mem::take(&mut runtime_state.pending_sidecar_events)
+}
+
+pub fn runtime_capabilities(
+    runtime_state: &RuntimeState,
+) -> Vec<RuntimeCapabilityManifestPayload> {
+    runtime_state
+        .registry
+        .list()
+        .into_iter()
+        .map(|manifest| RuntimeCapabilityManifestPayload {
+            id: manifest.id,
+            transport: transport_to_label(manifest.transport),
+            privacy_level: privacy_level_to_label(manifest.privacy_level),
+        })
+        .collect::<Vec<_>>()
+}
+
+pub fn build_runtime_state() -> RuntimeState {
+    build_runtime_state_with_config(heartbeat_config_from_env())
+}
+
+pub fn build_runtime_state_with_config(heartbeat_config: HeartbeatConfig) -> RuntimeState {
+    let mut registry = CapabilityRegistry::new();
+
+    let local_cli_manifest = CapabilityManifest {
+        id: "local-cli-bootstrap".to_string(),
+        transport: TransportKind::Cli,
+        supports: SupportedCapabilities {
+            chat: true,
+            streaming: true,
+            screen_reasoning: true,
+            tool_use: true,
+            local_execution: true,
+            ..Default::default()
+        },
+        privacy_level: PrivacyLevel::LocalFirst,
+        startup_mode: StartupMode::Warm,
+    };
+
+    let api_manifest = CapabilityManifest {
+        id: "cloud-api-bootstrap".to_string(),
+        transport: TransportKind::Api,
+        supports: SupportedCapabilities {
+            chat: true,
+            streaming: true,
+            vision: true,
+            ..Default::default()
+        },
+        privacy_level: PrivacyLevel::Cloud,
+        startup_mode: StartupMode::Cold,
+    };
+
+    registry
+        .register(local_cli_manifest)
+        .expect("bootstrap manifest must register");
+    registry
+        .register(api_manifest)
+        .expect("bootstrap manifest must register");
+
+    RuntimeState {
+        registry,
+        session_controller: Arc::new(SessionController::new()),
+        agent_supervisor: AgentSupervisor::new(),
+        heartbeat_config,
+        default_runtime_policy: RuntimePolicy {
+            mode: RuntimeMode::Hybrid,
+            minimum_privacy_level: PrivacyLevel::Cloud,
+        },
+        workspace_policy: workspace_policy_from_env(),
+        sidecar_enabled: sidecar_enabled_from_env(),
+        sidecar_session: None,
+        pending_sidecar_events: Vec::new(),
+    }
+}
+
+pub fn heartbeat_config_from_env() -> HeartbeatConfig {
+    let configured_interval_millis = std::env::var("COMPANION_HEARTBEAT_INTERVAL_MS")
+        .ok()
+        .and_then(|raw_value| raw_value.parse::<u64>().ok())
+        .filter(|value| *value >= 100);
+
+    match configured_interval_millis {
+        Some(interval_millis) => HeartbeatConfig {
+            interval: Duration::from_millis(interval_millis),
+        },
+        None => HeartbeatConfig::default(),
+    }
+}
+
+pub fn workspace_policy_from_env() -> WorkspacePolicy {
+    WorkspacePolicy {
+        no_screen_upload: env_flag_is_truthy("COMPANION_POLICY_NO_SCREEN_UPLOAD"),
+        no_audio_upload: env_flag_is_truthy("COMPANION_POLICY_NO_AUDIO_UPLOAD"),
+        local_only: env_flag_is_truthy("COMPANION_POLICY_LOCAL_ONLY"),
+    }
+}
+
+fn env_flag_is_truthy(var_name: &str) -> bool {
+    std::env::var(var_name)
+        .ok()
+        .map(|raw_value| {
+            matches!(
+                raw_value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn transport_to_label(transport: TransportKind) -> String {
+    match transport {
+        TransportKind::Cli => "cli",
+        TransportKind::Mcp => "mcp",
+        TransportKind::Bridge => "bridge",
+        TransportKind::Api => "api",
+        TransportKind::Local => "local",
+    }
+    .to_string()
+}
+
+fn privacy_level_to_label(privacy_level: PrivacyLevel) -> String {
+    match privacy_level {
+        PrivacyLevel::LocalOnly => "local-only",
+        PrivacyLevel::LocalFirst => "local-first",
+        PrivacyLevel::Hybrid => "hybrid",
+        PrivacyLevel::Cloud => "cloud",
+    }
+    .to_string()
+}
+
+fn agent_id_for_pack(active_pack: &str) -> String {
+    format!("{active_pack}-agent")
+}
+
+pub fn adaptive_heartbeat_interval(runtime_state: &RuntimeState) -> Duration {
+    let base_interval = runtime_state.heartbeat_config.interval;
+    let active_runtime_mode = runtime_state
+        .session_controller
+        .current_session()
+        .map(|session| session.runtime_mode)
+        .unwrap_or(runtime_state.default_runtime_policy.mode);
+
+    let base_millis = base_interval.as_millis() as u64;
+    let adjusted_millis = match active_runtime_mode {
+        RuntimeMode::Local => base_millis.saturating_sub(base_millis / 3).max(100),
+        RuntimeMode::Hybrid => base_millis.max(100),
+        RuntimeMode::Cloud => (base_millis + (base_millis / 2)).max(100),
+    };
+
+    Duration::from_millis(adjusted_millis)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_supervisor::AgentWarmState;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use runtime_core::SessionEvent;
+
+    #[test]
+    fn runtime_app_start_stop_updates_agent_state_and_emits_events() {
+        let mut runtime_state = build_runtime_state_with_config(HeartbeatConfig {
+            interval: Duration::from_millis(250),
+        });
+
+        let (session_payload, started_event) =
+            start_session(&mut runtime_state, Some("coding".to_string()), None)
+                .expect("start session should succeed");
+
+        let expected_agent_id = "coding-agent".to_string();
+        assert_eq!(
+            runtime_state.agent_supervisor.get_state(&expected_agent_id),
+            Some(AgentWarmState::Hot)
+        );
+        assert!(runtime_state.sidecar_session.is_none());
+        assert_eq!(session_payload.active_pack, "coding");
+        assert_eq!(runtime_state.heartbeat_config.interval, Duration::from_millis(250));
+
+        match started_event {
+            SessionEvent::SessionStarted { session_id, active_pack } => {
+                assert_eq!(session_id, session_payload.session_id);
+                assert_eq!(active_pack, "coding");
+            }
+            _ => panic!("expected session_started"),
+        }
+
+        let stopped_event =
+            stop_session(&mut runtime_state).expect("stopped event should be generated");
+
+        assert_eq!(
+            runtime_state.agent_supervisor.get_state(&expected_agent_id),
+            Some(AgentWarmState::Cold)
+        );
+        assert!(runtime_state.sidecar_session.is_none());
+
+        match stopped_event {
+            SessionEvent::SessionStopped {
+                session_id,
+                active_pack,
+                ..
+            } => {
+                assert_eq!(session_id, session_payload.session_id);
+                assert_eq!(active_pack, "coding");
+            }
+            _ => panic!("expected session_stopped"),
+        }
+    }
+
+    #[test]
+    fn adaptive_heartbeat_changes_by_mode() {
+        let mut runtime_state = build_runtime_state_with_config(HeartbeatConfig {
+            interval: Duration::from_millis(300),
+        });
+
+        runtime_state.default_runtime_policy.mode = RuntimeMode::Cloud;
+        assert_eq!(
+            adaptive_heartbeat_interval(&runtime_state),
+            Duration::from_millis(450)
+        );
+
+        runtime_state.default_runtime_policy.mode = RuntimeMode::Local;
+        assert_eq!(
+            adaptive_heartbeat_interval(&runtime_state),
+            Duration::from_millis(200)
+        );
+    }
+
+    #[test]
+    fn start_session_fails_when_workspace_policy_blocks_screen_upload() {
+        let mut runtime_state = build_runtime_state_with_config(HeartbeatConfig {
+            interval: Duration::from_millis(200),
+        });
+        runtime_state.workspace_policy = WorkspacePolicy {
+            no_screen_upload: true,
+            no_audio_upload: false,
+            local_only: false,
+        };
+
+        let result = start_session(&mut runtime_state, Some("companion".to_string()), None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn start_session_accepts_explicit_runtime_mode() {
+        let mut runtime_state = build_runtime_state_with_config(HeartbeatConfig {
+            interval: Duration::from_millis(250),
+        });
+
+        let (session_payload, _) = start_session(
+            &mut runtime_state,
+            Some("companion".to_string()),
+            Some(RuntimeMode::Local),
+        )
+        .expect("session should start in local mode");
+
+        assert_eq!(session_payload.runtime_mode, "local");
+        assert_eq!(
+            runtime_state
+                .session_controller
+                .current_session()
+                .expect("session should exist")
+                .runtime_mode,
+            RuntimeMode::Local
+        );
+    }
+
+    #[test]
+    fn workspace_policy_is_loaded_from_environment() {
+        std::env::set_var("COMPANION_POLICY_NO_SCREEN_UPLOAD", "true");
+        std::env::set_var("COMPANION_POLICY_NO_AUDIO_UPLOAD", "1");
+        std::env::set_var("COMPANION_POLICY_LOCAL_ONLY", "yes");
+
+        let policy = workspace_policy_from_env();
+        assert!(policy.no_screen_upload);
+        assert!(policy.no_audio_upload);
+        assert!(policy.local_only);
+
+        std::env::remove_var("COMPANION_POLICY_NO_SCREEN_UPLOAD");
+        std::env::remove_var("COMPANION_POLICY_NO_AUDIO_UPLOAD");
+        std::env::remove_var("COMPANION_POLICY_LOCAL_ONLY");
+    }
+
+    #[test]
+    fn sidecar_is_disabled_by_default_for_safe_rollout() {
+        std::env::remove_var("COMPANION_ENABLE_SIDECAR");
+        let runtime_state = build_runtime_state_with_config(HeartbeatConfig::default());
+        assert!(!runtime_state.sidecar_enabled);
+    }
+
+    #[test]
+    fn sidecar_real_binary_roundtrip_for_start_heartbeat_stop_when_available() {
+        let Some(sidecar_binary_path) = locate_prepared_sidecar_binary() else {
+            return;
+        };
+
+        let mut runtime_state = build_runtime_state_with_config(HeartbeatConfig {
+            interval: Duration::from_millis(150),
+        });
+        runtime_state.sidecar_enabled = true;
+        runtime_state.sidecar_session = Some(
+            RuntimeSidecarSession::spawn_with_binary(
+                &sidecar_binary_path.to_string_lossy(),
+            )
+            .expect("sidecar should spawn for integration roundtrip"),
+        );
+
+        let _ = start_session(&mut runtime_state, Some("companion".to_string()), Some(RuntimeMode::Hybrid))
+            .expect("start session should succeed with sidecar");
+        forward_heartbeat_to_sidecar(&mut runtime_state)
+            .expect("heartbeat forwarding should succeed with sidecar");
+        let stopped = stop_session(&mut runtime_state).expect("stop should emit runtime event");
+        match stopped {
+            SessionEvent::SessionStopped { .. } => {}
+            _ => panic!("expected session stopped event"),
+        }
+
+        let telemetry_events = take_pending_sidecar_events(&mut runtime_state);
+        let commands = telemetry_events
+            .iter()
+            .map(|event| (event.command.as_str(), event.response_kind.as_str()))
+            .collect::<Vec<_>>();
+
+        assert!(commands.contains(&("session_started", "ack")));
+        assert!(commands.contains(&("runtime_heartbeat", "ack")));
+        assert!(commands.contains(&("session_stopped", "ack")));
+        assert!(commands.contains(&("shutdown", "bye")));
+    }
+
+    fn locate_prepared_sidecar_binary() -> Option<PathBuf> {
+        let binaries_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries");
+        if !binaries_dir.exists() {
+            return None;
+        }
+
+        let expected_extension = if cfg!(windows) { ".exe" } else { "" };
+        let entries = fs::read_dir(&binaries_dir).ok()?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let file_name = path.file_name()?.to_string_lossy();
+            if !file_name.starts_with("runtime-sidecar-") {
+                continue;
+            }
+            if cfg!(windows) && !file_name.ends_with(".exe") {
+                continue;
+            }
+            if !cfg!(windows) && file_name.ends_with(".exe") {
+                continue;
+            }
+
+            let metadata = fs::metadata(&path).ok()?;
+            if metadata.len() == 0 {
+                continue;
+            }
+
+            if expected_extension.is_empty() || file_name.ends_with(expected_extension) {
+                return Some(path);
+            }
+        }
+
+        None
+    }
+}

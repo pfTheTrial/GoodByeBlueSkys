@@ -1,0 +1,9 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/runtime-core",
+  "crates/agent-supervisor",
+  "crates/policy-engine",
+  "crates/runtime-sidecar",
+  "apps/desktop/src-tauri"
+]

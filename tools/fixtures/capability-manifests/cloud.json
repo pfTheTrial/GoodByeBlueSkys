@@ -1,0 +1,16 @@
+[
+  {
+    "id": "cloud-api-bootstrap",
+    "transport": "api",
+    "privacy_level": "cloud",
+    "mode": "cloud",
+    "supports": ["chat", "streaming", "vision"]
+  },
+  {
+    "id": "cloud-medical-bootstrap",
+    "transport": "api",
+    "privacy_level": "cloud",
+    "mode": "cloud",
+    "supports": ["chat", "streaming", "medical_vision"]
+  }
+]

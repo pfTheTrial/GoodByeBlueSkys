@@ -1,0 +1,16 @@
+[
+  {
+    "id": "local-cli-bootstrap",
+    "transport": "cli",
+    "privacy_level": "local-first",
+    "mode": "hybrid",
+    "supports": ["chat", "streaming", "screen_reasoning", "tool_use", "local_execution"]
+  },
+  {
+    "id": "cloud-api-bootstrap",
+    "transport": "api",
+    "privacy_level": "cloud",
+    "mode": "hybrid",
+    "supports": ["chat", "streaming", "vision"]
+  }
+]
