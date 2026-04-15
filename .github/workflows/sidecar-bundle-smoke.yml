@@ -47,6 +47,8 @@ jobs:
 
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
 
       - name: Run sidecar bundle smoke test
         shell: pwsh
