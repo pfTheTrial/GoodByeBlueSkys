@@ -49,13 +49,16 @@ Subir base tecnica com contratos, registry e desktop shell inicial.
 41. Fluxo E2E de janela Tauri real adicionado via WebdriverIO + `tauri-driver` (gated por env)
 42. Smoke E2E real conectado ao CI Windows com provisionamento de `tauri-driver` + `EdgeDriver`
 43. Script operacional para branch protection GitHub com checks obrigatorios do desktop
+44. Workflows CI otimizados com path filters, cache Rust, timeout e concurrency cancel-in-progress
+45. Warning de checkout CI (`git exit code 128`) eliminado com remocao de gitlink orfao `plugins/cavekit`
+46. Gate padrao de validacao front-end adicionado via script root `npm test`
+47. Preferencias do painel de observabilidade persistidas em `localStorage` (modo, limite, auto-scroll) com cobertura de teste UI
 
 ## Itens imediatos (proximo commit)
 
-1. Executar `tools/scripts/apply-branch-protection.ps1` no repositorio remoto alvo (ORG/REPO)
+1. Iniciar Fase 2 com contrato minimo de sessao de voz (entrada/saida) no `runtime-core`, sem provider acoplado
 
 ## Riscos em aberto
 
 - build desktop depende de setup completo Tauri no ambiente
-- tempo de execucao do smoke E2E real no CI Windows pode impactar tempo total de pipeline
-- gate de branch protection ainda depende de aplicacao no repositorio remoto (fora deste workspace)
+- warnings de deprecacao Vite/Vitest (nao bloqueantes) devem ser tratados antes de endurecer gate de warning-zero
