@@ -31,6 +31,7 @@ concurrency:
 jobs:
   sidecar-smoke:
     strategy:
+      fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
@@ -48,4 +49,4 @@ jobs:
       - name: Run sidecar bundle smoke test
         shell: pwsh
         run: |
-          powershell -ExecutionPolicy Bypass -File tools/scripts/smoke-sidecar-bundle.ps1
+          ./tools/scripts/smoke-sidecar-bundle.ps1
