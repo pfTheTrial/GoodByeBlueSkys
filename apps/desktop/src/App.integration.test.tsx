@@ -29,6 +29,7 @@ describe("App integration", () => {
     invokeMock.mockReset();
     listenMock.mockReset();
     scrollToMock.mockReset();
+    localStorage.clear();
     Object.defineProperty(HTMLElement.prototype, "scrollTo", {
       configurable: true,
       value: scrollToMock
@@ -241,6 +242,24 @@ describe("App integration", () => {
       expect(screen.getByText(/runtime_heartbeat \| ack \| s-auto-2/i)).toBeInTheDocument();
     });
     expect(scrollToMock.mock.calls.length).toBe(disabledCalls);
+  });
+
+  it("restores persisted panel preferences from localStorage", async () => {
+    localStorage.setItem("companion.runtime_mode", "local");
+    localStorage.setItem("companion.event_limit", "25");
+    localStorage.setItem("companion.runtime_autoscroll", "false");
+    localStorage.setItem("companion.sidecar_autoscroll", "false");
+
+    render(<App />);
+
+    const modeSelect = (await screen.findByLabelText(/runtime mode/i)) as HTMLSelectElement;
+    const limitInput = screen.getByLabelText(/limite de eventos/i) as HTMLInputElement;
+    const toggles = screen.getAllByRole("checkbox") as HTMLInputElement[];
+
+    expect(modeSelect.value).toBe("local");
+    expect(limitInput.value).toBe("25");
+    expect(toggles[0].checked).toBe(false);
+    expect(toggles[1].checked).toBe(false);
   });
 });
 
