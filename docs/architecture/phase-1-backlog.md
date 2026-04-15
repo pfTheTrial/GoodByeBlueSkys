@@ -53,10 +53,13 @@ Subir base tecnica com contratos, registry e desktop shell inicial.
 45. Warning de checkout CI (`git exit code 128`) eliminado com remocao de gitlink orfao `plugins/cavekit`
 46. Gate padrao de validacao front-end adicionado via script root `npm test`
 47. Preferencias do painel de observabilidade persistidas em `localStorage` (modo, limite, auto-scroll) com cobertura de teste UI
+48. Fluxo de voz com chunks `input/output` integrado no backend desktop + sidecar (telemetria `ack`)
+49. Contratos provider-agnostic de chunk de voz adicionados no `runtime-core` (`VoiceInputChunkPayload`/`VoiceOutputChunkPayload`)
+50. Painel manual com configuracao de `Chunk input/output` e `MIME output` para teste rapido
 
 ## Itens imediatos (proximo commit)
 
-1. Iniciar Fase 2 com contrato minimo de sessao de voz (entrada/saida) no `runtime-core`, sem provider acoplado
+1. Iniciar ingestao simulada de audio no desktop (arquivo local -> chunks) para validar pipeline de voz sem provider externo
 
 ## Riscos em aberto
 

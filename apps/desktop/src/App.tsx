@@ -100,9 +100,12 @@ export function App() {
   const [isVoiceStopping, setIsVoiceStopping] = useState(false);
   const [isVoiceInputSending, setIsVoiceInputSending] = useState(false);
   const [isVoiceOutputPublishing, setIsVoiceOutputPublishing] = useState(false);
+  const [isVoiceFileSending, setIsVoiceFileSending] = useState(false);
   const [voiceInputChunkBytes, setVoiceInputChunkBytes] = useState(512);
   const [voiceOutputChunkBytes, setVoiceOutputChunkBytes] = useState(1024);
   const [voiceOutputMimeType, setVoiceOutputMimeType] = useState("audio/pcm");
+  const [selectedVoiceFile, setSelectedVoiceFile] = useState<File | null>(null);
+  const [voiceFileProgress, setVoiceFileProgress] = useState("n/a");
   const runtimeLogRef = useRef<HTMLUListElement | null>(null);
   const sidecarLogRef = useRef<HTMLUListElement | null>(null);
 
@@ -211,6 +214,47 @@ export function App() {
         setErrorMessage(`Falha ao publicar chunk de saida: ${String(error)}`);
       })
       .finally(() => setIsVoiceOutputPublishing(false));
+  };
+
+  const sendVoiceFileChunks = () => {
+    if (voiceStatus === "inativa") {
+      setErrorMessage("Inicie a sessao de voz antes de enviar arquivo");
+      return;
+    }
+
+    if (!selectedVoiceFile) {
+      setErrorMessage("Selecione um arquivo de audio");
+      return;
+    }
+
+    if (!Number.isFinite(voiceInputChunkBytes) || voiceInputChunkBytes <= 0) {
+      setErrorMessage("Chunk input deve ser maior que zero");
+      return;
+    }
+
+    setIsVoiceFileSending(true);
+    setErrorMessage(null);
+    void selectedVoiceFile
+      .arrayBuffer()
+      .then(async (buffer) => {
+        const bytes = new Uint8Array(buffer);
+        let offset = 0;
+        let chunksSent = 0;
+        while (offset < bytes.length) {
+          const chunkSize = Math.min(voiceInputChunkBytes, bytes.length - offset);
+          const event = await invoke<VoiceSessionEvent>("runtime_voice_input_chunk", {
+            chunkSizeBytes: chunkSize
+          });
+          chunksSent += 1;
+          offset += chunkSize;
+          setLastVoiceEvent(`input:${event.chunk_size_bytes ?? "n/a"} bytes`);
+          setVoiceFileProgress(`${offset}/${bytes.length} bytes (${chunksSent} chunks)`);
+        }
+      })
+      .catch((error: unknown) => {
+        setErrorMessage(`Falha ao enviar arquivo em chunks: ${String(error)}`);
+      })
+      .finally(() => setIsVoiceFileSending(false));
   };
 
   const filteredRuntimeEvents = runtimeEvents.filter((event) => {
@@ -418,6 +462,15 @@ export function App() {
                 onChange={(event) => setVoiceOutputMimeType(event.target.value)}
               />
             </label>
+            <label className="field">
+              Arquivo de audio
+              <input
+                type="file"
+                accept="audio/*"
+                onChange={(event) => setSelectedVoiceFile(event.target.files?.[0] ?? null)}
+              />
+            </label>
+            <p>Progresso arquivo voz: {voiceFileProgress}</p>
             <div className="actions">
               <button onClick={startSession} disabled={isStarting || Boolean(session)}>
                 {isStarting ? "Iniciando..." : "Iniciar sessao"}
@@ -448,6 +501,12 @@ export function App() {
                 disabled={isVoiceOutputPublishing || voiceStatus === "inativa"}
               >
                 {isVoiceOutputPublishing ? "Publicando output..." : "Publicar chunk output"}
+              </button>
+              <button
+                onClick={sendVoiceFileChunks}
+                disabled={isVoiceFileSending || voiceStatus === "inativa" || !selectedVoiceFile}
+              >
+                {isVoiceFileSending ? "Enviando arquivo..." : "Enviar arquivo em chunks"}
               </button>
               <button onClick={refreshSidecarHealth}>Health sidecar</button>
             </div>

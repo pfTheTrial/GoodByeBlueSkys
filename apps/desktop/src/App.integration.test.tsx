@@ -35,7 +35,7 @@ describe("App integration", () => {
       value: scrollToMock
     });
 
-    invokeMock.mockImplementation((command: string) => {
+    invokeMock.mockImplementation((command: string, args?: { chunkSizeBytes?: number }) => {
       switch (command) {
         case "runtime_health":
           return Promise.resolve("ok:warm");
@@ -69,7 +69,7 @@ describe("App integration", () => {
           return Promise.resolve({
             event_type: "voice_input_chunk_accepted",
             session_id: "session-1",
-            chunk_size_bytes: 512
+            chunk_size_bytes: args?.chunkSizeBytes ?? 512
           });
         case "runtime_voice_output_chunk":
           return Promise.resolve({
@@ -332,6 +332,34 @@ describe("App integration", () => {
       expect(
         screen.getByText(/Ultimo evento voz: output:1024 bytes \(audio\/pcm\)/i)
       ).toBeInTheDocument();
+    });
+  });
+
+  it("sends selected audio file in multiple chunks", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: /iniciar sessao/i }));
+    await user.click(screen.getByRole("button", { name: /iniciar voz/i }));
+
+    const fileInput = screen.getByLabelText(/arquivo de audio/i) as HTMLInputElement;
+    const file = new File([new Uint8Array(1200)], "sample.wav", { type: "audio/wav" });
+    await user.upload(fileInput, file);
+
+    await user.click(screen.getByRole("button", { name: /enviar arquivo em chunks/i }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("runtime_voice_input_chunk", {
+        chunkSizeBytes: 512
+      });
+    });
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("runtime_voice_input_chunk", {
+        chunkSizeBytes: 176
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByText(/Progresso arquivo voz: 1200\/1200 bytes \(3 chunks\)/i)).toBeInTheDocument();
     });
   });
 });
