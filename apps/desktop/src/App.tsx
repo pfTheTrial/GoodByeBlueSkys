@@ -31,19 +31,57 @@ type SidecarTelemetryEvent = {
 
 type RuntimeMode = "local" | "cloud" | "hybrid";
 
+const STORAGE_KEYS = {
+  runtimeMode: "companion.runtime_mode",
+  eventLimit: "companion.event_limit",
+  runtimeAutoScroll: "companion.runtime_autoscroll",
+  sidecarAutoScroll: "companion.sidecar_autoscroll"
+} as const;
+
+function readStoredRuntimeMode(): RuntimeMode {
+  const candidate = localStorage.getItem(STORAGE_KEYS.runtimeMode);
+  if (candidate === "local" || candidate === "cloud" || candidate === "hybrid") {
+    return candidate;
+  }
+  return "hybrid";
+}
+
+function readStoredEventLimit(): number {
+  const candidate = Number(localStorage.getItem(STORAGE_KEYS.eventLimit));
+  if (!Number.isFinite(candidate)) {
+    return 12;
+  }
+  return Math.min(200, Math.max(5, Math.round(candidate)));
+}
+
+function readStoredBoolean(key: string, fallback: boolean): boolean {
+  const candidate = localStorage.getItem(key);
+  if (candidate === "true") {
+    return true;
+  }
+  if (candidate === "false") {
+    return false;
+  }
+  return fallback;
+}
+
 export function App() {
   const [health, setHealth] = useState<string>("loading");
   const [sidecarHealth, setSidecarHealth] = useState<string>("unknown");
   const [capabilities, setCapabilities] = useState<CapabilityManifest[]>([]);
   const [session, setSession] = useState<RuntimeSessionContext | null>(null);
-  const [runtimeMode, setRuntimeMode] = useState<RuntimeMode>("hybrid");
+  const [runtimeMode, setRuntimeMode] = useState<RuntimeMode>(readStoredRuntimeMode);
   const [runtimeEvents, setRuntimeEvents] = useState<RuntimeSessionEvent[]>([]);
   const [sidecarEvents, setSidecarEvents] = useState<SidecarTelemetryEvent[]>([]);
-  const [eventLimit, setEventLimit] = useState(12);
+  const [eventLimit, setEventLimit] = useState(readStoredEventLimit);
   const [runtimeFilter, setRuntimeFilter] = useState("");
   const [sidecarFilter, setSidecarFilter] = useState("");
-  const [runtimeAutoScroll, setRuntimeAutoScroll] = useState(true);
-  const [sidecarAutoScroll, setSidecarAutoScroll] = useState(true);
+  const [runtimeAutoScroll, setRuntimeAutoScroll] = useState(() =>
+    readStoredBoolean(STORAGE_KEYS.runtimeAutoScroll, true)
+  );
+  const [sidecarAutoScroll, setSidecarAutoScroll] = useState(() =>
+    readStoredBoolean(STORAGE_KEYS.sidecarAutoScroll, true)
+  );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
@@ -135,6 +173,22 @@ export function App() {
     link.click();
     URL.revokeObjectURL(url);
   };
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.runtimeMode, runtimeMode);
+  }, [runtimeMode]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.eventLimit, String(eventLimit));
+  }, [eventLimit]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.runtimeAutoScroll, String(runtimeAutoScroll));
+  }, [runtimeAutoScroll]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.sidecarAutoScroll, String(sidecarAutoScroll));
+  }, [sidecarAutoScroll]);
 
   useEffect(() => {
     void invoke<string>("runtime_health")
