@@ -2,15 +2,38 @@ name: tauri-e2e-smoke
 
 on:
   pull_request:
+    paths:
+      - "apps/desktop/**"
+      - "crates/**"
+      - "tools/scripts/**"
+      - "package.json"
+      - "package-lock.json"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/tauri-e2e-smoke.yml"
   push:
     branches:
       - main
       - master
+    paths:
+      - "apps/desktop/**"
+      - "crates/**"
+      - "tools/scripts/**"
+      - "package.json"
+      - "package-lock.json"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/tauri-e2e-smoke.yml"
   workflow_dispatch:
+
+concurrency:
+  group: tauri-e2e-smoke-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   tauri-e2e-windows:
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,6 +46,9 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
 
       - name: Install workspace dependencies
         run: npm ci
