@@ -100,6 +100,9 @@ export function App() {
   const [isVoiceStopping, setIsVoiceStopping] = useState(false);
   const [isVoiceInputSending, setIsVoiceInputSending] = useState(false);
   const [isVoiceOutputPublishing, setIsVoiceOutputPublishing] = useState(false);
+  const [voiceInputChunkBytes, setVoiceInputChunkBytes] = useState(512);
+  const [voiceOutputChunkBytes, setVoiceOutputChunkBytes] = useState(1024);
+  const [voiceOutputMimeType, setVoiceOutputMimeType] = useState("audio/pcm");
   const runtimeLogRef = useRef<HTMLUListElement | null>(null);
   const sidecarLogRef = useRef<HTMLUListElement | null>(null);
 
@@ -168,9 +171,16 @@ export function App() {
   };
 
   const sendVoiceInputChunk = () => {
+    if (!Number.isFinite(voiceInputChunkBytes) || voiceInputChunkBytes <= 0) {
+      setErrorMessage("Chunk input deve ser maior que zero");
+      return;
+    }
+
     setIsVoiceInputSending(true);
     setErrorMessage(null);
-    void invoke<VoiceSessionEvent>("runtime_voice_input_chunk", { chunkSizeBytes: 512 })
+    void invoke<VoiceSessionEvent>("runtime_voice_input_chunk", {
+      chunkSizeBytes: voiceInputChunkBytes
+    })
       .then((event) => {
         setLastVoiceEvent(`input:${event.chunk_size_bytes ?? "n/a"} bytes`);
       })
@@ -181,11 +191,16 @@ export function App() {
   };
 
   const publishVoiceOutputChunk = () => {
+    if (!Number.isFinite(voiceOutputChunkBytes) || voiceOutputChunkBytes <= 0) {
+      setErrorMessage("Chunk output deve ser maior que zero");
+      return;
+    }
+
     setIsVoiceOutputPublishing(true);
     setErrorMessage(null);
     void invoke<VoiceSessionEvent>("runtime_voice_output_chunk", {
-      mimeType: "audio/pcm",
-      chunkSizeBytes: 1024
+      mimeType: voiceOutputMimeType.trim() || "audio/pcm",
+      chunkSizeBytes: voiceOutputChunkBytes
     })
       .then((event) => {
         setLastVoiceEvent(
@@ -363,6 +378,44 @@ export function App() {
                     setEventLimit(Math.min(200, Math.max(5, nextValue)));
                   }
                 }}
+              />
+            </label>
+            <label className="field">
+              Chunk input (bytes)
+              <input
+                type="number"
+                min={1}
+                max={65536}
+                value={voiceInputChunkBytes}
+                onChange={(event) => {
+                  const nextValue = Number(event.target.value);
+                  if (Number.isFinite(nextValue)) {
+                    setVoiceInputChunkBytes(Math.min(65536, Math.max(1, nextValue)));
+                  }
+                }}
+              />
+            </label>
+            <label className="field">
+              Chunk output (bytes)
+              <input
+                type="number"
+                min={1}
+                max={65536}
+                value={voiceOutputChunkBytes}
+                onChange={(event) => {
+                  const nextValue = Number(event.target.value);
+                  if (Number.isFinite(nextValue)) {
+                    setVoiceOutputChunkBytes(Math.min(65536, Math.max(1, nextValue)));
+                  }
+                }}
+              />
+            </label>
+            <label className="field">
+              MIME output
+              <input
+                type="text"
+                value={voiceOutputMimeType}
+                onChange={(event) => setVoiceOutputMimeType(event.target.value)}
               />
             </label>
             <div className="actions">
