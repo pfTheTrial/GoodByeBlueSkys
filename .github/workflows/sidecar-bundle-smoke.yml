@@ -2,11 +2,31 @@ name: sidecar-bundle-smoke
 
 on:
   pull_request:
+    paths:
+      - "apps/desktop/src-tauri/**"
+      - "crates/runtime-sidecar/**"
+      - "tools/scripts/prepare-sidecar.ps1"
+      - "tools/scripts/smoke-sidecar-bundle.ps1"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/sidecar-bundle-smoke.yml"
   push:
     branches:
       - main
       - master
+    paths:
+      - "apps/desktop/src-tauri/**"
+      - "crates/runtime-sidecar/**"
+      - "tools/scripts/prepare-sidecar.ps1"
+      - "tools/scripts/smoke-sidecar-bundle.ps1"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/sidecar-bundle-smoke.yml"
   workflow_dispatch:
+
+concurrency:
+  group: sidecar-bundle-smoke-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   sidecar-smoke:
@@ -14,12 +34,16 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
 
       - name: Run sidecar bundle smoke test
         shell: pwsh
