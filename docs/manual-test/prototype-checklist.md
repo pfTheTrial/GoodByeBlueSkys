@@ -29,9 +29,18 @@ Validar o prototipo desktop com observabilidade runtime+sidecar usando comandos 
    - `runtime_heartbeat | ack`
    - `session_stopped | ack`
    - `shutdown | bye`
+6. Validar sessao de voz:
+   - Clicar `Iniciar voz` e confirmar `Status voz: ativa (pt-BR)`.
+   - Clicar `Enviar chunk input` e validar `Ultimo evento voz: input:<bytes>`.
+   - Clicar `Publicar chunk output` e validar `Ultimo evento voz: output:<bytes> (<mime>)`.
+   - Clicar `Parar voz` e confirmar `Status voz: inativa`.
+7. Validar configuracao de chunk no painel:
+   - Ajustar `Chunk input (bytes)`, `Chunk output (bytes)` e `MIME output`.
+   - Repetir envio/publicacao e confirmar que o valor refletido no `Ultimo evento voz` muda conforme configurado.
 
 ## Resultado esperado
 
 - Sem erro de start/stop de sessao no painel.
 - Eventos runtime e sidecar atualizam em tempo real.
 - Sidecar fecha corretamente apos `Parar sessao`.
+- Fluxo de voz (start/chunk/chunk/stop) funciona sem erro.
