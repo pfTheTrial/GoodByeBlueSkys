@@ -60,6 +60,8 @@ fn handle_protocol_line(raw_line: &str) -> SidecarResponse {
         SidecarRequest::SessionStarted { .. } => SidecarResponse::ack(),
         SidecarRequest::RuntimeHeartbeat { .. } => SidecarResponse::ack(),
         SidecarRequest::SessionStopped { .. } => SidecarResponse::ack(),
+        SidecarRequest::VoiceSessionStarted { .. } => SidecarResponse::ack(),
+        SidecarRequest::VoiceSessionStopped { .. } => SidecarResponse::ack(),
         SidecarRequest::Shutdown => SidecarResponse::bye(),
     }
 }
@@ -79,6 +81,14 @@ enum SidecarRequest {
         status: String,
     },
     SessionStopped {
+        session_id: String,
+        reason: String,
+    },
+    VoiceSessionStarted {
+        session_id: String,
+        locale: String,
+    },
+    VoiceSessionStopped {
         session_id: String,
         reason: String,
     },
@@ -124,6 +134,10 @@ mod tests {
         let started = r#"{"kind":"session_started","session_id":"s1","active_pack":"companion","runtime_mode":"hybrid","assigned_agent_id":"companion-agent"}"#;
         let started_response = handle_protocol_line(started);
         assert!(matches!(started_response.kind, SidecarResponseKind::Ack));
+
+        let voice_started = r#"{"kind":"voice_session_started","session_id":"s1","locale":"pt-BR"}"#;
+        let voice_started_response = handle_protocol_line(voice_started);
+        assert!(matches!(voice_started_response.kind, SidecarResponseKind::Ack));
 
         let shutdown = r#"{"kind":"shutdown"}"#;
         let shutdown_response = handle_protocol_line(shutdown);

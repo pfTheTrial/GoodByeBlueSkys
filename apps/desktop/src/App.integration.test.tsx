@@ -57,6 +57,14 @@ describe("App integration", () => {
           });
         case "runtime_stop_session":
           return Promise.resolve(null);
+        case "runtime_voice_start":
+          return Promise.resolve({
+            event_type: "voice_session_started",
+            session_id: "session-1",
+            locale: "pt-BR"
+          });
+        case "runtime_voice_stop":
+          return Promise.resolve(null);
         default:
           return Promise.reject(new Error(`unexpected command: ${command}`));
       }
@@ -260,6 +268,27 @@ describe("App integration", () => {
     expect(limitInput.value).toBe("25");
     expect(toggles[0].checked).toBe(false);
     expect(toggles[1].checked).toBe(false);
+  });
+
+  it("starts and stops voice session through tauri commands", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: /iniciar sessao/i }));
+    await user.click(screen.getByRole("button", { name: /iniciar voz/i }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("runtime_voice_start", {
+        locale: "pt-BR"
+      });
+    });
+    expect(screen.getByText(/Status voz: ativa \(pt-BR\)/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /parar voz/i }));
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("runtime_voice_stop", undefined);
+    });
+    expect(screen.getByText(/Status voz: inativa/i)).toBeInTheDocument();
   });
 });
 

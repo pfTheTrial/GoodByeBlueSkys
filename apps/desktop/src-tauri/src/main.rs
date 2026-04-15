@@ -6,9 +6,12 @@ use runtime_app::{
     adaptive_heartbeat_interval, forward_heartbeat_to_sidecar, take_pending_sidecar_events,
     build_runtime_state, runtime_capabilities as runtime_capabilities_from_state,
     runtime_health as runtime_health_from_state, start_session as runtime_start_session_in_state,
-    stop_session as runtime_stop_session_in_state, RuntimeCapabilityManifestPayload, RuntimeState,
+    start_voice_session as runtime_start_voice_session_in_state,
+    stop_session as runtime_stop_session_in_state,
+    stop_voice_session as runtime_stop_voice_session_in_state,
+    RuntimeCapabilityManifestPayload, RuntimeState,
 };
-use runtime_core::{RuntimeMode, RuntimeSessionContextPayload, SessionEvent};
+use runtime_core::{RuntimeMode, RuntimeSessionContextPayload, SessionEvent, VoiceSessionEvent};
 use std::sync::Mutex;
 use std::thread;
 use tauri::Emitter;
@@ -52,11 +55,70 @@ fn runtime_stop_session(
     let mut locked_state = state
         .lock()
         .map_err(|_| "state lock failed".to_string())?;
+    emit_voice_events(
+        &app,
+        runtime_stop_voice_session_command(&mut locked_state, "runtime_session_stopped"),
+    );
     if let Some(stopped_event_payload) = runtime_stop_session_command(&mut locked_state) {
         let _ = app.emit("runtime://session_event", stopped_event_payload);
     }
     emit_sidecar_events(&app, &mut locked_state);
 
+    Ok(())
+}
+
+#[tauri::command]
+fn runtime_voice_start(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Mutex<RuntimeState>>,
+    locale: Option<String>,
+) -> Result<VoiceSessionEvent, String> {
+    let mut locked_state = state
+        .lock()
+        .map_err(|_| "state lock failed".to_string())?;
+    let voice_event = runtime_start_voice_session_command(&mut locked_state, locale)?;
+    emit_voice_events(&app, Some(voice_event.clone()));
+    emit_sidecar_events(&app, &mut locked_state);
+    Ok(voice_event)
+}
+
+#[tauri::command]
+fn runtime_voice_stop(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Mutex<RuntimeState>>,
+) -> Result<(), String> {
+    let mut locked_state = state
+        .lock()
+        .map_err(|_| "state lock failed".to_string())?;
+    emit_voice_events(
+        &app,
+        runtime_stop_voice_session_command(&mut locked_state, "stopped_by_user"),
+    );
+    emit_sidecar_events(&app, &mut locked_state);
+    Ok(())
+}
+
+#[cfg(test)]
+#[tauri::command]
+fn runtime_voice_start_test(
+    state: tauri::State<'_, Mutex<RuntimeState>>,
+    locale: Option<String>,
+) -> Result<VoiceSessionEvent, String> {
+    let mut locked_state = state
+        .lock()
+        .map_err(|_| "state lock failed".to_string())?;
+    runtime_start_voice_session_command(&mut locked_state, locale)
+}
+
+#[cfg(test)]
+#[tauri::command]
+fn runtime_voice_stop_test(
+    state: tauri::State<'_, Mutex<RuntimeState>>,
+) -> Result<(), String> {
+    let mut locked_state = state
+        .lock()
+        .map_err(|_| "state lock failed".to_string())?;
+    let _ = runtime_stop_voice_session_command(&mut locked_state, "stopped_by_test");
     Ok(())
 }
 
@@ -139,7 +201,9 @@ fn main() {
             runtime_capabilities,
             runtime_sidecar_health,
             runtime_start_session,
-            runtime_stop_session
+            runtime_stop_session,
+            runtime_voice_start,
+            runtime_voice_stop
         ])
         .run(tauri::generate_context!())
         .expect("tauri application failed");
@@ -155,6 +219,20 @@ fn runtime_start_session_command(
 
 fn runtime_stop_session_command(runtime_state: &mut RuntimeState) -> Option<SessionEvent> {
     runtime_stop_session_in_state(runtime_state)
+}
+
+fn runtime_start_voice_session_command(
+    runtime_state: &mut RuntimeState,
+    locale: Option<String>,
+) -> Result<VoiceSessionEvent, String> {
+    runtime_start_voice_session_in_state(runtime_state, locale)
+}
+
+fn runtime_stop_voice_session_command(
+    runtime_state: &mut RuntimeState,
+    reason: &str,
+) -> Option<VoiceSessionEvent> {
+    runtime_stop_voice_session_in_state(runtime_state, reason)
 }
 
 fn runtime_capabilities_command(
@@ -175,6 +253,12 @@ fn parse_runtime_mode(raw_runtime_mode: &str) -> Result<RuntimeMode, String> {
 fn emit_sidecar_events(app: &tauri::AppHandle, runtime_state: &mut RuntimeState) {
     for sidecar_event in take_pending_sidecar_events(runtime_state) {
         let _ = app.emit("runtime://sidecar_event", sidecar_event);
+    }
+}
+
+fn emit_voice_events(app: &tauri::AppHandle, voice_event: Option<VoiceSessionEvent>) {
+    if let Some(event) = voice_event {
+        let _ = app.emit("runtime://voice_event", event);
     }
 }
 
@@ -203,6 +287,22 @@ mod command_tests {
         match started_event {
             SessionEvent::SessionStarted { .. } => {}
             _ => panic!("expected started event"),
+        }
+
+        let voice_started =
+            runtime_start_voice_session_command(&mut runtime_state, Some("pt-BR".to_string()))
+                .expect("voice should start");
+        match voice_started {
+            VoiceSessionEvent::VoiceSessionStarted { .. } => {}
+            _ => panic!("expected voice started event"),
+        }
+
+        let voice_stopped =
+            runtime_stop_voice_session_command(&mut runtime_state, "stopped_by_test")
+                .expect("voice should stop");
+        match voice_stopped {
+            VoiceSessionEvent::VoiceSessionStopped { .. } => {}
+            _ => panic!("expected voice stopped event"),
         }
 
         let stopped_event =
@@ -262,7 +362,9 @@ mod ipc_tests {
                 runtime_capabilities,
                 runtime_sidecar_health,
                 runtime_start_session_test,
-                runtime_stop_session_test
+                runtime_stop_session_test,
+                runtime_voice_start_test,
+                runtime_voice_stop_test
             ])
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .expect("mock app should build");
@@ -302,6 +404,29 @@ mod ipc_tests {
 
         assert_eq!(session_payload.active_pack, "companion");
         assert_eq!(session_payload.runtime_mode, "local");
+
+        let voice_start_body = serde_json::json!({
+            "locale": "pt-BR"
+        });
+        let voice_event = tauri::test::get_ipc_response(
+            &webview,
+            invoke_request("runtime_voice_start_test", InvokeBody::Json(voice_start_body)),
+        )
+        .expect("runtime_voice_start_test should succeed")
+        .deserialize::<VoiceSessionEvent>()
+        .expect("voice event payload should deserialize");
+        match voice_event {
+            VoiceSessionEvent::VoiceSessionStarted { locale, .. } => {
+                assert_eq!(locale, "pt-BR");
+            }
+            _ => panic!("expected voice session started event"),
+        }
+
+        tauri::test::get_ipc_response(
+            &webview,
+            invoke_request("runtime_voice_stop_test", InvokeBody::default()),
+        )
+        .expect("runtime_voice_stop_test should succeed");
     }
 
     fn invoke_request(command: &str, body: InvokeBody) -> InvokeRequest {

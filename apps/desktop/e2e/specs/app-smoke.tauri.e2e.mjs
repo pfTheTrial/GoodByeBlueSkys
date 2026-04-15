@@ -25,6 +25,35 @@ describe("Companion desktop smoke", () => {
       }
     );
 
+    const startVoiceButton = await $("button=Iniciar voz");
+    await startVoiceButton.click();
+
+    const voiceLine = await $("p*=Status voz:");
+    await browser.waitUntil(
+      async () => {
+        const text = await voiceLine.getText();
+        return text.includes("ativa");
+      },
+      {
+        timeout: 15000,
+        timeoutMsg: "voz nao ficou ativa apos clicar em Iniciar voz"
+      }
+    );
+
+    const stopVoiceButton = await $("button=Parar voz");
+    await stopVoiceButton.click();
+
+    await browser.waitUntil(
+      async () => {
+        const text = await voiceLine.getText();
+        return text.includes("inativa");
+      },
+      {
+        timeout: 15000,
+        timeoutMsg: "voz nao voltou para estado inativo apos clicar em Parar voz"
+      }
+    );
+
     const stopButton = await $("button=Parar sessao");
     await stopButton.click();
 

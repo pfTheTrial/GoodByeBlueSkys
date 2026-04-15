@@ -29,6 +29,13 @@ type SidecarTelemetryEvent = {
   detail?: string;
 };
 
+type VoiceSessionEvent = {
+  event_type: string;
+  session_id: string;
+  locale?: string;
+  reason?: string;
+};
+
 type RuntimeMode = "local" | "cloud" | "hybrid";
 
 const STORAGE_KEYS = {
@@ -85,6 +92,9 @@ export function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState("inativa");
+  const [isVoiceStarting, setIsVoiceStarting] = useState(false);
+  const [isVoiceStopping, setIsVoiceStopping] = useState(false);
   const runtimeLogRef = useRef<HTMLUListElement | null>(null);
   const sidecarLogRef = useRef<HTMLUListElement | null>(null);
 
@@ -121,10 +131,35 @@ export function App() {
     setErrorMessage(null);
     void invoke("runtime_stop_session")
       .then(() => setSession(null))
+      .then(() => setVoiceStatus("inativa"))
       .catch((error: unknown) => {
         setErrorMessage(`Falha ao parar sessao: ${String(error)}`);
       })
       .finally(() => setIsStopping(false));
+  };
+
+  const startVoiceSession = () => {
+    setIsVoiceStarting(true);
+    setErrorMessage(null);
+    void invoke<VoiceSessionEvent>("runtime_voice_start", { locale: "pt-BR" })
+      .then((event) => {
+        setVoiceStatus(`ativa (${event.locale ?? "n/a"})`);
+      })
+      .catch((error: unknown) => {
+        setErrorMessage(`Falha ao iniciar voz: ${String(error)}`);
+      })
+      .finally(() => setIsVoiceStarting(false));
+  };
+
+  const stopVoiceSession = () => {
+    setIsVoiceStopping(true);
+    setErrorMessage(null);
+    void invoke("runtime_voice_stop")
+      .then(() => setVoiceStatus("inativa"))
+      .catch((error: unknown) => {
+        setErrorMessage(`Falha ao parar voz: ${String(error)}`);
+      })
+      .finally(() => setIsVoiceStopping(false));
   };
 
   const filteredRuntimeEvents = runtimeEvents.filter((event) => {
@@ -215,9 +250,21 @@ export function App() {
       }
     );
 
+    const voiceUnlistenPromise = listen<VoiceSessionEvent>(
+      "runtime://voice_event",
+      (event) => {
+        if (event.payload.event_type === "voice_session_started") {
+          setVoiceStatus(`ativa (${event.payload.locale ?? "n/a"})`);
+        } else if (event.payload.event_type === "voice_session_stopped") {
+          setVoiceStatus("inativa");
+        }
+      }
+    );
+
     return () => {
       void runtimeUnlistenPromise.then((unlisten) => unlisten());
       void sidecarUnlistenPromise.then((unlisten) => unlisten());
+      void voiceUnlistenPromise.then((unlisten) => unlisten());
     };
   }, [eventLimit]);
 
@@ -234,6 +281,7 @@ export function App() {
             <h2>Estado</h2>
             <p>Status runtime: {health}</p>
             <p>Status sidecar: {sidecarHealth}</p>
+            <p>Status voz: {voiceStatus}</p>
             <p>
               Sessao ativa:{" "}
               {session
@@ -278,6 +326,18 @@ export function App() {
               </button>
               <button onClick={stopSession} disabled={isStopping || !session}>
                 {isStopping ? "Parando..." : "Parar sessao"}
+              </button>
+              <button
+                onClick={startVoiceSession}
+                disabled={isVoiceStarting || !session || voiceStatus !== "inativa"}
+              >
+                {isVoiceStarting ? "Iniciando voz..." : "Iniciar voz"}
+              </button>
+              <button
+                onClick={stopVoiceSession}
+                disabled={isVoiceStopping || voiceStatus === "inativa"}
+              >
+                {isVoiceStopping ? "Parando voz..." : "Parar voz"}
               </button>
               <button onClick={refreshSidecarHealth}>Health sidecar</button>
             </div>

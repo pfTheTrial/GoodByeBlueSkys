@@ -122,6 +122,28 @@ impl RuntimeSidecarSession {
         Ok(event)
     }
 
+    pub fn send_voice_session_started(
+        &mut self,
+        session_id: &str,
+        locale: &str,
+    ) -> Result<SidecarTelemetryEvent, String> {
+        self.send_request(SidecarRequest::VoiceSessionStarted {
+            session_id: session_id.to_string(),
+            locale: locale.to_string(),
+        })
+    }
+
+    pub fn send_voice_session_stopped(
+        &mut self,
+        session_id: &str,
+        reason: &str,
+    ) -> Result<SidecarTelemetryEvent, String> {
+        self.send_request(SidecarRequest::VoiceSessionStopped {
+            session_id: session_id.to_string(),
+            reason: reason.to_string(),
+        })
+    }
+
     fn send_request(&mut self, request: SidecarRequest) -> Result<SidecarTelemetryEvent, String> {
         let command_name = request.command_name().to_string();
         let request_session_id = request.session_id().map(ToString::to_string);
@@ -182,6 +204,14 @@ enum SidecarRequest {
         session_id: String,
         reason: String,
     },
+    VoiceSessionStarted {
+        session_id: String,
+        locale: String,
+    },
+    VoiceSessionStopped {
+        session_id: String,
+        reason: String,
+    },
     Shutdown,
 }
 
@@ -191,6 +221,8 @@ impl SidecarRequest {
             SidecarRequest::SessionStarted { .. } => "session_started",
             SidecarRequest::RuntimeHeartbeat { .. } => "runtime_heartbeat",
             SidecarRequest::SessionStopped { .. } => "session_stopped",
+            SidecarRequest::VoiceSessionStarted { .. } => "voice_session_started",
+            SidecarRequest::VoiceSessionStopped { .. } => "voice_session_stopped",
             SidecarRequest::Shutdown => "shutdown",
         }
     }
@@ -200,6 +232,8 @@ impl SidecarRequest {
             SidecarRequest::SessionStarted { session_id, .. } => Some(session_id),
             SidecarRequest::RuntimeHeartbeat { session_id, .. } => Some(session_id),
             SidecarRequest::SessionStopped { session_id, .. } => Some(session_id),
+            SidecarRequest::VoiceSessionStarted { session_id, .. } => Some(session_id),
+            SidecarRequest::VoiceSessionStopped { session_id, .. } => Some(session_id),
             SidecarRequest::Shutdown => None,
         }
     }

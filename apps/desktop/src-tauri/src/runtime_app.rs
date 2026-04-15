@@ -7,6 +7,7 @@ use std::time::Duration;
 use runtime_core::{
     CapabilityManifest, CapabilityRegistry, PrivacyLevel, RuntimeMode, StartupMode,
     RuntimePolicy, RuntimeSessionContextPayload, SessionEvent, SupportedCapabilities, TransportKind,
+    VoiceSessionConfig, VoiceSessionEvent,
 };
 
 use crate::runtime_session::{
@@ -24,6 +25,7 @@ pub struct RuntimeState {
     pub sidecar_enabled: bool,
     pub sidecar_session: Option<RuntimeSidecarSession>,
     pub pending_sidecar_events: Vec<SidecarTelemetryEvent>,
+    pub voice_session: Option<VoiceSessionConfig>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -131,6 +133,69 @@ pub fn stop_session(runtime_state: &mut RuntimeState) -> Option<SessionEvent> {
     runtime_state.session_controller.stop_session()
 }
 
+pub fn start_voice_session(
+    runtime_state: &mut RuntimeState,
+    locale: Option<String>,
+) -> Result<VoiceSessionEvent, String> {
+    let current_session = runtime_state
+        .session_controller
+        .current_session()
+        .ok_or_else(|| "cannot start voice session without active runtime session".to_string())?;
+
+    if runtime_state.voice_session.is_some() {
+        return Err("voice session already active".to_string());
+    }
+
+    if runtime_state.workspace_policy.no_audio_upload {
+        return Err("workspace policy blocks audio upload".to_string());
+    }
+
+    let voice_locale = locale
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "pt-BR".to_string());
+
+    let voice_session = VoiceSessionConfig {
+        session_id: current_session.session_id.clone(),
+        input_device_id: None,
+        output_device_id: None,
+        locale: voice_locale.clone(),
+    };
+
+    if let Some(sidecar_session) = runtime_state.sidecar_session.as_mut() {
+        let telemetry_event =
+            sidecar_session.send_voice_session_started(&voice_session.session_id, &voice_locale)?;
+        runtime_state.pending_sidecar_events.push(telemetry_event);
+    }
+
+    runtime_state.voice_session = Some(voice_session.clone());
+
+    Ok(VoiceSessionEvent::VoiceSessionStarted {
+        session_id: voice_session.session_id,
+        locale: voice_locale,
+    })
+}
+
+pub fn stop_voice_session(
+    runtime_state: &mut RuntimeState,
+    reason: &str,
+) -> Option<VoiceSessionEvent> {
+    let voice_session = runtime_state.voice_session.take()?;
+
+    if let Some(sidecar_session) = runtime_state.sidecar_session.as_mut() {
+        if let Ok(telemetry_event) =
+            sidecar_session.send_voice_session_stopped(&voice_session.session_id, reason)
+        {
+            runtime_state.pending_sidecar_events.push(telemetry_event);
+        }
+    }
+
+    Some(VoiceSessionEvent::VoiceSessionStopped {
+        session_id: voice_session.session_id,
+        reason: reason.to_string(),
+    })
+}
+
 pub fn forward_heartbeat_to_sidecar(runtime_state: &mut RuntimeState) -> Result<(), String> {
     if !runtime_state.sidecar_enabled {
         return Ok(());
@@ -227,6 +292,7 @@ pub fn build_runtime_state_with_config(heartbeat_config: HeartbeatConfig) -> Run
         sidecar_enabled: sidecar_enabled_from_env(),
         sidecar_session: None,
         pending_sidecar_events: Vec::new(),
+        voice_session: None,
     }
 }
 
@@ -464,6 +530,20 @@ mod tests {
 
         let _ = start_session(&mut runtime_state, Some("companion".to_string()), Some(RuntimeMode::Hybrid))
             .expect("start session should succeed with sidecar");
+        let voice_started =
+            start_voice_session(&mut runtime_state, Some("pt-BR".to_string()))
+                .expect("voice session should start with sidecar");
+        match voice_started {
+            VoiceSessionEvent::VoiceSessionStarted { .. } => {}
+            _ => panic!("expected voice session started event"),
+        }
+        let voice_stopped =
+            stop_voice_session(&mut runtime_state, "voice_stopped_by_test")
+                .expect("voice session should stop with sidecar");
+        match voice_stopped {
+            VoiceSessionEvent::VoiceSessionStopped { .. } => {}
+            _ => panic!("expected voice session stopped event"),
+        }
         forward_heartbeat_to_sidecar(&mut runtime_state)
             .expect("heartbeat forwarding should succeed with sidecar");
         let stopped = stop_session(&mut runtime_state).expect("stop should emit runtime event");
@@ -479,6 +559,8 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(commands.contains(&("session_started", "ack")));
+        assert!(commands.contains(&("voice_session_started", "ack")));
+        assert!(commands.contains(&("voice_session_stopped", "ack")));
         assert!(commands.contains(&("runtime_heartbeat", "ack")));
         assert!(commands.contains(&("session_stopped", "ack")));
         assert!(commands.contains(&("shutdown", "bye")));
