@@ -27,9 +27,9 @@ if ($LASTEXITCODE -ne 0) {
 
 Push-Location $workspaceRoot
 try {
-    & cargo check -p companion-desktop
+    & cargo check -p runtime-sidecar
     if ($LASTEXITCODE -ne 0) {
-        throw "cargo check -p companion-desktop failed during sidecar smoke test"
+        throw "cargo check -p runtime-sidecar failed during sidecar smoke test"
     }
 } finally {
     Pop-Location
